@@ -1,128 +1,35 @@
-let csrf = "";
-
+let csrf = '';
+let products = [];
+let uploadPolicy = {max_bytes: 5 * 1024 * 1024, allowed_types: ['image/jpeg','image/png','image/webp','image/avif']};
+let editorProduct = null, selectedFile = null, removeExistingImage = false, lastFocusedElement = null;
 const $ = s => document.querySelector(s);
-const esc = v => String(v ?? "").replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[c]));
-
-async function api(url, options={}) {
-  const headers = {"Accept":"application/json", ...(options.headers || {})};
-  if (options.body && !(options.body instanceof FormData)) headers["Content-Type"] = "application/json";
-  if (csrf) headers["X-CSRF-Token"] = csrf;
-  const r = await fetch(url, {...options, headers});
-  if (r.status === 401) { showLogin(); throw new Error("Session expired"); }
-  const data = await r.json().catch(()=>({}));
-  if (!r.ok) throw new Error(data.detail || "Request failed");
-  return data;
-}
-
-function showLogin() {
-  $("#loginView").hidden = false; $("#adminView").hidden = true;
-}
-
-async function boot() {
-  try {
-    const me = await api("/api/auth/me");
-    csrf = me.csrf;
-    if (me.user.role !== "ADMIN") throw new Error("Administrator access required");
-    $("#loginView").hidden = true; $("#adminView").hidden = false;
-    await refresh();
-  } catch (_) { showLogin(); }
-}
-
-$("#loginForm").addEventListener("submit", async e => {
-  e.preventDefault();
-  $("#loginError").textContent = "";
-  try {
-    const data = await api("/api/auth/login", {method:"POST", body:JSON.stringify({
-      username: $("#username").value.trim(), password: $("#password").value
-    })});
-    csrf = data.csrf; $("#password").value = "";
-    $("#loginView").hidden = true; $("#adminView").hidden = false;
-    await refresh();
-  } catch (err) { $("#loginError").textContent = err.message; }
-});
-
-$("#logout").addEventListener("click", async () => {
-  try { await api("/api/auth/logout",{method:"POST"}); } finally { csrf=""; showLogin(); }
-});
-
-async function refresh() {
-  const [stats, products, enquiries, audit] = await Promise.all([
-    api("/api/admin/dashboard"), api("/api/admin/products"), api("/api/admin/enquiries"), api("/api/admin/audit")
-  ]);
-  $("#statProducts").textContent = stats.products;
-  $("#statPublished").textContent = stats.published_products;
-  $("#statEnquiries").textContent = stats.new_enquiries;
-  renderProducts(products); renderEnquiries(enquiries); renderAudit(audit);
-}
-
-function renderProducts(products) {
-  $("#products").innerHTML = products.map(p => `
-    <div class="product-row" data-id="${p.id}">
-      <div class="preview" ${p.image_url ? `style="background-image:url('${esc(p.image_url)}')"` : ""}>${p.image_url ? "" : "No image"}</div>
-      <input class="name" value="${esc(p.name)}" maxlength="160" aria-label="Name">
-      <input class="price" value="${esc(p.price)}" maxlength="60" aria-label="Price">
-      <input class="tag" value="${esc(p.tag)}" maxlength="60" aria-label="Tag">
-      <input class="description" value="${esc(p.description)}" maxlength="500" aria-label="Description">
-      <select class="status"><option>DRAFT</option><option>PUBLISHED</option><option>HIDDEN</option><option>ARCHIVED</option></select>
-      <input class="image" type="file" accept="image/jpeg,image/png,image/webp,image/avif" aria-label="Image">
-      <div class="row-actions"><button class="save">Save</button><button class="archive outline">Archive</button></div>
-    </div>`).join("");
-
-  products.forEach(p => {
-    const row = document.querySelector(`.product-row[data-id="${p.id}"]`);
-    row.querySelector(".status").value = p.status;
-    row.querySelector(".save").onclick = () => saveProduct(p.id);
-    row.querySelector(".archive").onclick = () => archiveProduct(p.id);
-  });
-}
-
-async function saveProduct(id) {
-  const row = document.querySelector(`.product-row[data-id="${id}"]`);
-  const payload = {
-    name: row.querySelector(".name").value.trim(),
-    price: row.querySelector(".price").value.trim(),
-    tag: row.querySelector(".tag").value.trim(),
-    description: row.querySelector(".description").value.trim(),
-    status: row.querySelector(".status").value,
-    sort_order: id
-  };
-  try {
-    const p = await api(`/api/admin/products/${id}`, {method:"PUT",body:JSON.stringify(payload)});
-    const file = row.querySelector(".image").files[0];
-    if (file) {
-      const fd = new FormData(); fd.append("file",file);
-      await api(`/api/admin/products/${id}/image`, {method:"POST",body:fd});
-    }
-    await refresh();
-  } catch(e) { alert(e.message); }
-}
-
-async function archiveProduct(id) {
-  if (!confirm("Archive this piece? It can be restored by changing its status later.")) return;
-  try { await api(`/api/admin/products/${id}`,{method:"DELETE"}); await refresh(); } catch(e){alert(e.message);}
-}
-
-$("#addProduct").onclick = async () => {
-  try {
-    await api("/api/admin/products",{method:"POST",body:JSON.stringify({
-      name:"New Ensemble",price:"Price on Request",tag:"New",description:"Designer piece",status:"DRAFT",sort_order:0
-    })});
-    await refresh();
-    document.querySelector(".product-row .name")?.focus();
-  } catch(e){alert(e.message);}
-};
-
-function renderEnquiries(rows) {
-  const statuses = ["NEW","CONTACTED","CUSTOMIZATION","CONFIRMED","COMPLETED","LOST"];
-  $("#enquiries").innerHTML = rows.length ? rows.map(e => `<div class="enquiry">
-    <div><b>${esc(e.name)}</b><span>${esc(e.phone)} · ${new Date(e.created_at).toLocaleString()}</span><p>${esc(e.message)}</p></div>
-    <select data-id="${e.id}">${statuses.map(s=>`<option ${s===e.status?"selected":""}>${s}</option>`).join("")}</select>
-  </div>`).join("") : `<p class="muted">No enquiries yet.</p>`;
-  $("#enquiries").querySelectorAll("select").forEach(s=>s.onchange=async()=>{try{await api(`/api/admin/enquiries/${s.dataset.id}`,{method:"PUT",body:JSON.stringify({status:s.value})});}catch(e){alert(e.message);}});
-}
-
-function renderAudit(rows) {
-  $("#audit").innerHTML = rows.length ? `<div class="audit-list">${rows.map(a=>`<div><b>${esc(a.action)}</b> · ${esc(a.entity_type)} #${esc(a.entity_id)}<span>${new Date(a.created_at).toLocaleString()}</span></div>`).join("")}</div>` : `<p class="muted">No activity yet.</p>`;
-}
-
+const esc = v => String(v ?? '').replace(/[&<>\"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','\"':'&quot;',"'":'&#039;'}[c]));
+const formatBytes = bytes => { if (!Number.isFinite(bytes)) return ''; if (bytes < 1024*1024) return Math.round(bytes/1024)+' KB'; return (bytes/(1024*1024)).toFixed(bytes >= 10*1024*1024 ? 0 : 1)+' MB'; };
+const formatDate = value => value ? new Date(value).toLocaleString([], {dateStyle:'medium',timeStyle:'short'}) : '—';
+async function api(url, options={}) { const headers={Accept:'application/json',...(options.headers||{})}; if(options.body && !(options.body instanceof FormData)) headers['Content-Type']='application/json'; if(csrf) headers['X-CSRF-Token']=csrf; const r=await fetch(url,{...options,headers}); if(r.status===401){showLogin();throw new Error('Session expired. Please sign in again.');} const data=await r.json().catch(()=>({})); if(!r.ok) throw new Error(data.detail||'Request failed'); return data; }
+function showLogin(){ $('#loginView').hidden=false; $('#adminView').hidden=true; }
+async function boot(){ try{ const me=await api('/api/auth/me'); csrf=me.csrf; if(me.user.role!=='ADMIN') throw new Error('Administrator access required.'); $('#loginView').hidden=true; $('#adminView').hidden=false; uploadPolicy=await api('/api/admin/upload-policy'); $('#imageLimit').textContent='Up to '+formatBytes(uploadPolicy.max_bytes); await refresh(); }catch(_){showLogin();} }
+$('#loginForm').addEventListener('submit',async e=>{e.preventDefault();$('#loginError').textContent='';try{const data=await api('/api/auth/login',{method:'POST',body:JSON.stringify({username:$('#username').value.trim(),password:$('#password').value})});csrf=data.csrf;$('#password').value='';$('#loginView').hidden=true;$('#adminView').hidden=false;uploadPolicy=await api('/api/admin/upload-policy');$('#imageLimit').textContent='Up to '+formatBytes(uploadPolicy.max_bytes);await refresh();}catch(err){$('#loginError').textContent=err.message;}});
+$('#logout').addEventListener('click',async()=>{try{await api('/api/auth/logout',{method:'POST'});}finally{csrf='';showLogin();}});
+async function refresh(){const [stats,productRows,enquiries,audit]=await Promise.all([api('/api/admin/dashboard'),api('/api/admin/products'),api('/api/admin/enquiries'),api('/api/admin/audit')]);products=productRows;$('#statProducts').textContent=stats.products;$('#statPublished').textContent=stats.published_products;$('#statEnquiries').textContent=stats.new_enquiries;renderProducts();renderEnquiries(enquiries);renderAudit(audit);}
+function renderProducts(){const query=$('#productSearch').value.trim().toLowerCase(),status=$('#statusFilter').value;const filtered=products.filter(p=>{const q=!query||[p.name,p.tag,p.description,p.price].some(v=>String(v??'').toLowerCase().includes(query));return q&&(!status||p.status===status);});$('#products').innerHTML=filtered.length?filtered.map(p=>'<article class="product-card"><div class="product-thumb">'+(p.image_url?'<img src="'+esc(p.image_url)+'" alt="'+esc(p.name)+'" loading="lazy">':'<span>No image</span>')+'</div><div class="product-card-main"><div class="product-card-top"><h3>'+esc(p.name)+'</h3><span class="status-pill status-'+esc(p.status)+'">'+esc(p.status)+'</span></div><p>'+esc(p.description||'No description yet.')+'</p><div class="product-meta"><span>'+esc(p.tag||'Collection')+'</span><span>·</span><span>'+esc(p.price)+'</span><span>·</span><span>Updated '+esc(formatDate(p.updated_at))+'</span></div></div><div class="product-actions"><button class="outline small" type="button" data-edit="'+p.id+'">Edit</button><button class="ghost small" type="button" data-image="'+p.id+'">'+(p.image_url?'Replace image':'Add image')+'</button>'+(p.status!=='ARCHIVED'?'<button class="ghost small" type="button" data-archive="'+p.id+'">Archive</button>':'')+'</div></article>').join(''):'<div class="empty-list">No products match this view.</div>';$('#products').querySelectorAll('[data-edit]').forEach(b=>b.addEventListener('click',()=>openEditor(products.find(p=>p.id===Number(b.dataset.edit)))));$('#products').querySelectorAll('[data-image]').forEach(b=>b.addEventListener('click',()=>{const p=products.find(x=>x.id===Number(b.dataset.image));openEditor(p);setTimeout(()=>$('#imageFile').click(),50);}));$('#products').querySelectorAll('[data-archive]').forEach(b=>b.addEventListener('click',()=>archiveProduct(Number(b.dataset.archive))));}
+$('#productSearch').addEventListener('input',renderProducts);$('#statusFilter').addEventListener('change',renderProducts);
+function resetEditor(){$('#productForm').reset();$('#productId').value='';$('#productStatus').value='DRAFT';$('#productOrder').value='0';$('#productDescription').value='';$('#descriptionCount').textContent='0 / 500';$('#imagePreview').hidden=true;$('#imagePreview').removeAttribute('src');$('#imagePlaceholder').hidden=false;$('#imageMeta').hidden=true;$('#imageMeta').textContent='';$('#imageState').textContent='';$('#imageState').className='upload-state';$('#progressWrap').hidden=true;$('#uploadProgress span').style.width='0%';$('#progressText').textContent='0%';$('#removeImage').hidden=true;selectedFile=null;removeExistingImage=false;editorProduct=null;clearErrors();}
+function openEditor(product=null){lastFocusedElement=document.activeElement;resetEditor();editorProduct=product||null;$('#editorKicker').textContent=product?'EDIT PIECE':'NEW PIECE';$('#editorTitle').textContent=product?'Edit product':'Add product';if(product){$('#productId').value=product.id;$('#productName').value=product.name||'';$('#productPrice').value=product.price||'';$('#productTag').value=product.tag||'';$('#productDescription').value=product.description||'';$('#productStatus').value=product.status||'DRAFT';$('#productOrder').value=Number.isFinite(product.sort_order)?product.sort_order:0;updateDescriptionCount();if(product.image_url)showExistingImage(product);}$('#productEditor').hidden=false;document.body.style.overflow='hidden';$('#productName').focus();}
+function closeEditor(){if($('#saveProduct').disabled&&!$('#progressWrap').hidden)return;$('#productEditor').hidden=true;document.body.style.overflow='';resetEditor();if(lastFocusedElement&&typeof lastFocusedElement.focus==='function')lastFocusedElement.focus();}
+function showExistingImage(product){$('#imagePreview').src=product.image_url;$('#imagePreview').hidden=false;$('#imagePlaceholder').hidden=true;$('#imageMeta').hidden=false;$('#imageMeta').textContent='Current image · replacing it keeps this image until the new upload succeeds.';$('#removeImage').hidden=false;}
+function clearErrors(){document.querySelectorAll('.field-error').forEach(x=>x.textContent='');document.querySelectorAll('[aria-invalid=true]').forEach(x=>x.removeAttribute('aria-invalid'));}
+function validateForm(){clearErrors();let ok=true;[['productName','Product name is required.'],['productPrice','Price is required.']].forEach(([id,msg])=>{const el=$('#'+id);if(!el.value.trim()){el.setAttribute('aria-invalid','true');document.querySelector('[data-error-for="'+id+'"]').textContent=msg;ok=false;}});if($('#productDescription').value.length>500){$('#productDescription').setAttribute('aria-invalid','true');document.querySelector('[data-error-for="productDescription"]').textContent='Description must be 500 characters or fewer.';ok=false;}return ok;}
+function updateDescriptionCount(){const n=$('#productDescription').value.length;$('#descriptionCount').textContent=n+' / 500';$('#descriptionCount').style.color=n>470?(n>500?'var(--danger)':'var(--warn)'):'';}$('#productDescription').addEventListener('input',updateDescriptionCount);
+function setImageState(message,kind='info'){$('#imageState').textContent=message;$('#imageState').className='upload-state '+kind;}
+function inspectFile(file){if(!file)return;const allowed=uploadPolicy.allowed_types||['image/jpeg','image/png','image/webp','image/avif'];if(!allowed.includes(file.type)){setImageState('Unsupported format. Choose JPEG, PNG, WebP or AVIF.','error');return;}if(file.size>uploadPolicy.max_bytes){setImageState('This image is '+formatBytes(file.size)+'. The limit is '+formatBytes(uploadPolicy.max_bytes)+'.','error');return;}selectedFile=file;removeExistingImage=false;const url=URL.createObjectURL(file);const probe=new Image();probe.onload=()=>{$('#imagePreview').src=url;$('#imagePreview').hidden=false;$('#imagePlaceholder').hidden=true;$('#imageMeta').hidden=false;$('#imageMeta').textContent=file.name+' · '+formatBytes(file.size)+' · '+probe.naturalWidth+' × '+probe.naturalHeight+'px';$('#removeImage').hidden=false;setImageState('Ready to upload when you save.','success');};probe.onerror=()=>{URL.revokeObjectURL(url);selectedFile=null;setImageState('The image could not be decoded by this browser.','error');};probe.src=url;}
+function handleFiles(files){const file=files&&files[0];if(file)inspectFile(file);}
+$('#dropZone').addEventListener('click',()=>$('#imageFile').click());$('#dropZone').addEventListener('keydown',e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();$('#imageFile').click();}});$('#imageFile').addEventListener('change',e=>{handleFiles(e.target.files);e.target.value='';});['dragenter','dragover'].forEach(type=>$('#dropZone').addEventListener(type,e=>{e.preventDefault();$('#dropZone').classList.add('dragover');}));['dragleave','drop'].forEach(type=>$('#dropZone').addEventListener(type,e=>{e.preventDefault();$('#dropZone').classList.remove('dragover');}));$('#dropZone').addEventListener('drop',e=>handleFiles(e.dataTransfer.files));$('#replaceImage').addEventListener('click',()=>$('#imageFile').click());
+$('#removeImage').addEventListener('click',()=>{selectedFile=null;if(editorProduct?.image_url&&!removeExistingImage){removeExistingImage=true;$('#imagePreview').hidden=true;$('#imagePreview').removeAttribute('src');$('#imagePlaceholder').hidden=false;$('#imageMeta').hidden=false;$('#imageMeta').textContent='Current image will be removed when you save.';setImageState('Image removal queued.','info');}else{$('#imagePreview').hidden=true;$('#imagePlaceholder').hidden=false;$('#imageMeta').hidden=true;$('#removeImage').hidden=true;setImageState('','info');}});
+function uploadImage(productId,file){return new Promise((resolve,reject)=>{const xhr=new XMLHttpRequest(),fd=new FormData();fd.append('file',file,file.name);xhr.open('POST','/api/admin/products/'+productId+'/image');xhr.setRequestHeader('Accept','application/json');xhr.setRequestHeader('X-CSRF-Token',csrf);xhr.upload.onprogress=e=>{if(!e.lengthComputable)return;const pct=Math.round(e.loaded/e.total*100);$('#progressWrap').hidden=false;$('#uploadProgress span').style.width=pct+'%';$('#progressText').textContent=pct+'%';};xhr.onload=()=>{let data={};try{data=JSON.parse(xhr.responseText||'{}')}catch{}if(xhr.status>=200&&xhr.status<300)resolve(data);else reject(new Error(data.detail||'Image upload failed.'));};xhr.onerror=()=>reject(new Error('Upload failed. Check your connection and try again.'));xhr.ontimeout=()=>reject(new Error('Upload timed out. Please try again.'));xhr.timeout=120000;xhr.send(fd);});}
+$('#productForm').addEventListener('submit',async e=>{e.preventDefault();if(!validateForm())return;const save=$('#saveProduct');save.disabled=true;$('#cancelEditor').disabled=true;$('#replaceImage').disabled=true;$('#removeImage').disabled=true;$('#saveMessage').className='save-message';$('#saveMessage').textContent='Saving…';try{const payload={name:$('#productName').value.trim(),price:$('#productPrice').value.trim(),tag:$('#productTag').value.trim()||'Collection',description:$('#productDescription').value.trim(),status:$('#productStatus').value,sort_order:Math.max(0,Number.parseInt($('#productOrder').value||'0',10)||0),image_url:editorProduct?.image_url||null};if(payload.status==='PUBLISHED'&&!payload.image_url&&!selectedFile){if(!confirm('Publish this piece without an image? It will appear on the boutique without a product photo.'))throw new Error('Publish cancelled.');}let saved=editorProduct?await api('/api/admin/products/'+editorProduct.id,{method:'PUT',body:JSON.stringify(payload)}):await api('/api/admin/products',{method:'POST',body:JSON.stringify(payload)});if(selectedFile){$('#saveMessage').textContent='Uploading image…';$('#progressWrap').hidden=false;$('#progressText').textContent='0%';const upload=await uploadImage(saved.id,selectedFile);saved={...saved,image_url:upload.image_url};setImageState('Uploaded · '+upload.width+' × '+upload.height+'px · '+formatBytes(upload.size),'success');}else if(removeExistingImage&&editorProduct?.image_url){$('#saveMessage').textContent='Removing image…';await api('/api/admin/products/'+editorProduct.id+'/image',{method:'DELETE'});saved={...saved,image_url:null};}$('#saveMessage').textContent='Saved successfully.';$('#saveMessage').className='save-message success';await refresh();setTimeout(closeEditor,350);}catch(err){$('#saveMessage').textContent=err.message;$('#saveMessage').className='save-message error';}finally{save.disabled=false;$('#cancelEditor').disabled=false;$('#replaceImage').disabled=false;$('#removeImage').disabled=false;}});
+$('#addProduct').addEventListener('click',()=>openEditor());$('#closeEditor').addEventListener('click',closeEditor);$('#cancelEditor').addEventListener('click',closeEditor);$('#productEditor').addEventListener('click',e=>{if(e.target.id==='productEditor')closeEditor();});document.addEventListener('keydown',e=>{if(e.key==='Escape'&&!$('#productEditor').hidden)closeEditor();});
+async function archiveProduct(id){const p=products.find(x=>x.id===id);if(!p)return;if(!confirm('Archive “'+p.name+'”? The product will remain in the admin catalogue.'))return;try{await api('/api/admin/products/'+id,{method:'DELETE'});await refresh();}catch(e){alert(e.message);}}
+function renderEnquiries(rows){const statuses=['NEW','CONTACTED','CUSTOMIZATION','CONFIRMED','COMPLETED','LOST'];$('#enquiries').innerHTML=rows.length?rows.map(e=>'<div class="enquiry"><div><b>'+esc(e.name)+'</b><span>'+esc(e.phone)+' · '+esc(formatDate(e.created_at))+'</span><p>'+esc(e.message)+'</p></div><select data-id="'+e.id+'">'+statuses.map(s=>'<option '+(s===e.status?'selected':'')+'>'+s+'</option>').join('')+'</select></div>').join(''):'<p class="muted">No enquiries yet.</p>';$('#enquiries').querySelectorAll('select').forEach(s=>s.onchange=async()=>{try{await api('/api/admin/enquiries/'+s.dataset.id,{method:'PUT',body:JSON.stringify({status:s.value})});}catch(e){alert(e.message);}});}
+function renderAudit(rows){$('#audit').innerHTML=rows.length?'<div class="audit-list">'+rows.map(a=>'<div><b>'+esc(a.action)+'</b> · '+esc(a.entity_type)+' #'+esc(a.entity_id)+'<span>'+esc(formatDate(a.created_at))+'</span></div>').join('')+'</div>':'<p class="muted">No activity yet.</p>';}
 boot();
