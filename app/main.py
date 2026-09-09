@@ -472,7 +472,10 @@ def uploaded_image(filename: str):
     path = UPLOAD_DIR / filename
     if not path.is_file():
         raise HTTPException(404, "Not found.")
-    media = mimetypes.guess_type(filename)[0] or "application/octet-stream"
+    media = mimetypes.guess_type(filename)[0]
+    if filename.lower().endswith(".avif"):
+        media = "image/avif"
+    media = media or "application/octet-stream"
     return FileResponse(path, media_type=media, headers={"X-Content-Type-Options":"nosniff"})
 
 @app.get("/api/admin/enquiries")
