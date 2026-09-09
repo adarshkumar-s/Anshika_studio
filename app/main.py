@@ -331,6 +331,9 @@ def me(request: Request, db: Session = Depends(db)):
     user, session = get_current_session(request, db)
     return {"user": {"id": user.id, "username": user.username, "role": user.role}, "csrf": session.csrf_token}
 
+@app.get("/api/admin/upload-policy")
+def upload_policy(auth=Depends(require_admin)):
+    return {"max_bytes": MAX_UPLOAD_BYTES, "allowed_types": sorted(ALLOWED_IMAGE_TYPES)}
 @app.get("/api/admin/products")
 def admin_products(auth=Depends(require_admin), db: Session = Depends(db)):
     return [serialize_product(p) for p in db.scalars(select(Product).order_by(Product.sort_order, Product.id)).all()]
