@@ -19,20 +19,82 @@
 </div>
 
 <div id="adminView" hidden>
-<header class="admin-header"><a class="brand" href="/"><span class="crest">A</span><b>LABEL BY ANSHIKA</b></a><div><a href="/" target="_blank">View Boutique ↗</a><button id="logout" class="outline">Log Out</button></div></header>
+<header class="admin-header">
+  <a class="brand" href="/"><span class="crest">A</span><b>LABEL BY ANSHIKA</b></a>
+  <div class="header-actions"><a href="/" target="_blank" rel="noopener noreferrer">View Boutique ↗</a><button id="logout" class="outline">Log Out</button></div>
+</header>
 <main class="admin-main">
   <div class="head"><p class="eyebrow">CONTROL ROOM</p><h1>Manage your <i>atelier.</i></h1></div>
-  <section class="stats"><div><b id="statProducts">0</b><span>Products</span></div><div><b id="statPublished">0</b><span>Published</span></div><div><b id="statEnquiries">0</b><span>New enquiries</span></div></section>
-
-  <section class="card">
-    <div class="section-title"><div><h2>Collection</h2><p class="muted">Products are stored centrally and changes are audited.</p></div><button id="addProduct" class="btn">+ Add Piece</button></div>
-    <div id="products"></div>
+  <section class="stats">
+    <div><b id="statProducts">0</b><span>Products</span></div>
+    <div><b id="statPublished">0</b><span>Published</span></div>
+    <div><b id="statEnquiries">0</b><span>New enquiries</span></div>
   </section>
 
-  <section class="card"><div class="section-title"><div><h2>Enquiries</h2><p class="muted">Track customer conversations without losing the trail.</p></div></div><div id="enquiries"></div></section>
-  <section class="card"><div class="section-title"><div><h2>Audit Trail</h2><p class="muted">Administrative changes are recorded.</p></div></div><div id="audit"></div></section>
+  <section class="card">
+    <div class="section-title">
+      <div><p class="eyebrow">CATALOGUE</p><h2>Collection</h2></div>
+      <button id="addProduct" class="btn">+ Add Piece</button>
+    </div>
+    <div class="catalog-tools">
+      <label class="search-field"><span>Search collection</span><input id="productSearch" type="search" placeholder="Name, tag or description" autocomplete="off"></label>
+      <label class="filter-field"><span>Status</span><select id="statusFilter"><option value="">All statuses</option><option>DRAFT</option><option>PUBLISHED</option><option>HIDDEN</option><option>ARCHIVED</option></select></label>
+    </div>
+    <div id="products" class="product-list"></div>
+  </section>
+
+  <section class="card"><div class="section-title"><div><p class="eyebrow">CUSTOMER MESSAGES</p><h2>Enquiries</h2></div></div><div id="enquiries"></div></section>
+  <section class="card"><div class="section-title"><div><p class="eyebrow">SECURITY</p><h2>Audit Trail</h2></div></div><div id="audit"></div></section>
 </main>
 </div>
+
+<div id="productEditor" class="editor-backdrop" hidden>
+  <aside class="editor" role="dialog" aria-modal="true" aria-labelledby="editorTitle">
+    <div class="editor-head">
+      <div><p class="eyebrow" id="editorKicker">NEW PIECE</p><h2 id="editorTitle">Add product</h2></div>
+      <button id="closeEditor" class="icon-btn" type="button" aria-label="Close editor">×</button>
+    </div>
+    <form id="productForm" novalidate>
+      <input id="productId" type="hidden">
+      <div class="editor-grid">
+        <div class="editor-fields">
+          <div class="field"><label for="productName">Product name</label><input id="productName" maxlength="160" required autocomplete="off"><small class="field-error" data-error-for="productName"></small></div>
+          <div class="two-col">
+            <div class="field"><label for="productPrice">Price</label><input id="productPrice" maxlength="60" required placeholder="Price on Request"></div>
+            <div class="field"><label for="productTag">Tag / category</label><input id="productTag" maxlength="60" placeholder="Collection"></div>
+          </div>
+          <div class="field">
+            <div class="label-row"><label for="productDescription">Description</label><span id="descriptionCount">0 / 500</span></div>
+            <textarea id="productDescription" maxlength="500" rows="8" placeholder="Write the product description…"></textarea>
+            <small class="field-error" data-error-for="productDescription"></small>
+          </div>
+          <div class="two-col">
+            <div class="field"><label for="productStatus">Status</label><select id="productStatus"><option>DRAFT</option><option>PUBLISHED</option><option>HIDDEN</option><option>ARCHIVED</option></select><small class="hint">Published pieces appear on the boutique.</small></div>
+            <div class="field"><label for="productOrder">Display order</label><input id="productOrder" type="number" min="0" max="100000" step="1" value="0"><small class="hint">Lower numbers appear first.</small></div>
+          </div>
+        </div>
+
+        <div class="image-panel">
+          <div class="image-panel-head"><div><p class="eyebrow">PRODUCT IMAGE</p><strong>Public preview</strong></div><span id="imageLimit" class="limit-pill">Up to 5 MB</span></div>
+          <div id="dropZone" class="drop-zone" tabindex="0" role="button" aria-label="Choose product image">
+            <div id="imagePlaceholder" class="image-placeholder"><span>＋</span><strong>Upload image</strong><small>Drop here or click to browse</small><small>JPEG · PNG · WebP · AVIF</small></div>
+            <img id="imagePreview" alt="Selected product preview" hidden>
+            <input id="imageFile" type="file" accept="image/jpeg,image/png,image/webp,image/avif" hidden>
+          </div>
+          <div id="imageMeta" class="image-meta" hidden></div>
+          <div id="imageState" class="upload-state" role="status" aria-live="polite"></div>
+          <div class="progress-wrap" id="progressWrap" hidden><div id="uploadProgress" class="progress"><span></span></div><small id="progressText">0%</small></div>
+          <div class="image-actions"><button id="replaceImage" class="outline small" type="button">Choose image</button><button id="removeImage" class="ghost small" type="button" hidden>Remove image</button></div>
+        </div>
+      </div>
+      <div class="editor-footer">
+        <span id="saveMessage" class="save-message" role="status" aria-live="polite"></span>
+        <div><button id="cancelEditor" class="outline" type="button">Cancel</button><button id="saveProduct" class="btn" type="submit">Save product</button></div>
+      </div>
+    </form>
+  </aside>
+</div>
+
 <script src="/static/js/admin.js" defer></script>
 </body>
 </html>
