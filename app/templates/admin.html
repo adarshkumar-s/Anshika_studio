@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="robots" content="noindex,nofollow">
+<title>Studio Administration | Label by Anshika</title>
+<link rel="stylesheet" href="/static/css/admin.css">
+</head>
+<body>
+<div id="loginView" class="login-wrap">
+  <form id="loginForm" class="login-card" autocomplete="on">
+    <div class="crest">A</div><p class="eyebrow">LABEL BY ANSHIKA</p><h1>Private <i>atelier.</i></h1>
+    <p class="muted">Secure studio management</p>
+    <label>Username<input id="username" autocomplete="username" required maxlength="80"></label>
+    <label>Password<input id="password" type="password" autocomplete="current-password" required maxlength="256"></label>
+    <button class="btn" type="submit">Enter Atelier ↗</button><p id="loginError" class="error" role="alert"></p>
+    <a href="/">← Back to Boutique</a>
+  </form>
+</div>
+
+<div id="adminView" hidden>
+<header class="admin-header"><a class="brand" href="/"><span class="crest">A</span><b>LABEL BY ANSHIKA</b></a><div><a href="/" target="_blank">View Boutique ↗</a><button id="logout" class="outline">Log Out</button></div></header>
+<main class="admin-main">
+  <div class="head"><p class="eyebrow">CONTROL ROOM</p><h1>Manage your <i>atelier.</i></h1></div>
+  <section class="stats"><div><b id="statProducts">0</b><span>Products</span></div><div><b id="statPublished">0</b><span>Published</span></div><div><b id="statEnquiries">0</b><span>New enquiries</span></div></section>
+
+  <section class="card">
+    <div class="section-title"><div><h2>Collection</h2><p class="muted">Products are stored centrally and changes are audited.</p></div><button id="addProduct" class="btn">+ Add Piece</button></div>
+    <div id="products"></div>
+  </section>
+
+  <section class="card"><div class="section-title"><div><h2>Enquiries</h2><p class="muted">Track customer conversations without losing the trail.</p></div></div><div id="enquiries"></div></section>
+  <section class="card"><div class="section-title"><div><h2>Audit Trail</h2><p class="muted">Administrative changes are recorded.</p></div></div><div id="audit"></div></section>
+</main>
+</div>
+<script src="/static/js/admin.js" defer></script>
+</body>
+</html>
