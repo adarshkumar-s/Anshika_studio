@@ -27,3 +27,13 @@ def test_login_sets_cookie_and_csrf():
 def test_wrong_password():
     r = client.post("/api/auth/login", json={"username":"testadmin","password":"wrongwrongwrong"})
     assert r.status_code == 401
+
+
+def test_product_upload_policy_requires_admin():
+    r = client.get('/api/admin/upload-policy')
+    assert r.status_code == 401
+
+
+def test_product_create_requires_csrf():
+    r = client.post('/api/admin/products', json={'name':'Test','price':'Price on Request','tag':'Test','description':'Test','status':'DRAFT','sort_order':0})
+    assert r.status_code == 403
