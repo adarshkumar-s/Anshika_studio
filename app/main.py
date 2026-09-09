@@ -2,6 +2,7 @@ import os
 import secrets
 import hashlib
 import mimetypes
+import io
 
 from dotenv import load_dotenv
 from datetime import datetime, timedelta, timezone
@@ -199,7 +200,22 @@ class EnquiryStatusIn(BaseModel):
 def serialize_product(p: Product):
     return {"id": p.id, "name": p.name, "price": p.price, "tag": p.tag,
             "description": p.description, "image_url": p.image_url,
-            "status": p.status, "sort_order": p.sort_order}
+            "status": p.status, "sort_order": p.sort_order,
+            "created_at": p.created_at.isoformat() if p.created_at else None,
+            "updated_at": p.updated_at.isoformat() if p.updated_at else None}
+
+def _cleanup_image_if_unreferenced(db: Session, image_url: Optional[str]) -> None:
+    if not image_url or not image_url.startswith("/uploads/"):
+        return
+    filename = image_url.removeprefix("/uploads/")
+    if Path(filename).name != filename or filename.startswith("."):
+        return
+    if db.scalar(select(Product.id).where(Product.image_url == image_url).limit(1)):
+        return
+    try:
+        (UPLOAD_DIR / filename).unlink(missing_ok=True)
+    except OSError:
+        pass
 
 app = FastAPI(title="Label by Anshika", docs_url=None if APP_ENV == "production" else "/docs",
               redoc_url=None if APP_ENV == "production" else "/redoc")
@@ -315,6 +331,9 @@ def me(request: Request, db: Session = Depends(db)):
     user, session = get_current_session(request, db)
     return {"user": {"id": user.id, "username": user.username, "role": user.role}, "csrf": session.csrf_token}
 
+@app.get("/api/admin/upload-policy")
+def upload_policy(auth=Depends(require_admin)):
+    return {"max_bytes": MAX_UPLOAD_BYTES, "allowed_types": sorted(ALLOWED_IMAGE_TYPES)}
 @app.get("/api/admin/products")
 def admin_products(auth=Depends(require_admin), db: Session = Depends(db)):
     return [serialize_product(p) for p in db.scalars(select(Product).order_by(Product.sort_order, Product.id)).all()]
@@ -371,27 +390,79 @@ async def upload_image(product_id: int, request: Request, file: UploadFile = Fil
         raise HTTPException(404, "Product not found.")
     if file.content_type not in ALLOWED_IMAGE_TYPES:
         raise HTTPException(415, "Only JPEG, PNG, WebP, or AVIF images are allowed.")
+
     data = await file.read(MAX_UPLOAD_BYTES + 1)
     if len(data) > MAX_UPLOAD_BYTES:
-        raise HTTPException(413, "Image is too large.")
-    # Validate actual image signature using Pillow, not only the MIME header.
+        raise HTTPException(413, f"Image is too large. The maximum is {MAX_UPLOAD_BYTES // (1024 * 1024)} MB.")
+
+    # The browser MIME type is only an initial gate. Pillow verifies the actual file.
     try:
         from PIL import Image
-        import io
-        im = Image.open(io.BytesIO(data))
-        im.verify()
+        with Image.open(io.BytesIO(data)) as probe:
+            probe.verify()
+        with Image.open(io.BytesIO(data)) as im:
+            width, height = im.size
+            detected_format = (im.format or "").upper()
     except Exception:
-        raise HTTPException(415, "Invalid image file.")
+        raise HTTPException(415, "The selected file is not a valid, readable image.")
+
+    if width < 1 or height < 1 or width * height > 50_000_000:
+        raise HTTPException(422, "Image dimensions are not supported.")
+
     ext = {"image/jpeg":"jpg","image/png":"png","image/webp":"webp","image/avif":"avif"}[file.content_type]
+
+    # Avoid writing the same bytes again when the current image is re-selected.
+    if p.image_url and p.image_url.startswith("/uploads/"):
+        current_path = UPLOAD_DIR / Path(p.image_url).name
+        if current_path.is_file():
+            try:
+                if hashlib.sha256(current_path.read_bytes()).digest() == hashlib.sha256(data).digest():
+                    return {"image_url": p.image_url, "filename": current_path.name, "size": len(data),
+                            "width": width, "height": height, "format": detected_format, "duplicate": True}
+            except OSError:
+                pass
+
     filename = f"{secrets.token_hex(20)}.{ext}"
     path = UPLOAD_DIR / filename
-    path.write_bytes(data)
     old = p.image_url
+    path.write_bytes(data)
     p.image_url = f"/uploads/{filename}"
     audit(db, request, user.id, "IMAGE_UPDATE", "PRODUCT", p.id,
           {"image_url": old}, {"image_url": p.image_url})
-    db.commit()
-    return {"image_url": p.image_url}
+    try:
+        db.commit()
+    except Exception:
+        db.rollback()
+        try:
+            path.unlink(missing_ok=True)
+        except OSError:
+            pass
+        raise
+
+    _cleanup_image_if_unreferenced(db, old)
+    return {"image_url": p.image_url, "filename": filename, "size": len(data),
+            "width": width, "height": height, "format": detected_format, "duplicate": False}
+
+@app.delete("/api/admin/products/{product_id}/image")
+def remove_image(product_id: int, request: Request, auth=Depends(require_admin), db: Session = Depends(db)):
+    user, session = auth
+    require_csrf(request, session)
+    p = db.get(Product, product_id)
+    if not p:
+        raise HTTPException(404, "Product not found.")
+    old = p.image_url
+    if not old:
+        return {"ok": True, "image_url": None}
+    p.image_url = None
+    audit(db, request, user.id, "IMAGE_REMOVE", "PRODUCT", p.id,
+          {"image_url": old}, {"image_url": None})
+    try:
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise
+    _cleanup_image_if_unreferenced(db, old)
+    return {"ok": True, "image_url": None}
 
 @app.get("/uploads/{filename}")
 def uploaded_image(filename: str):
@@ -401,7 +472,10 @@ def uploaded_image(filename: str):
     path = UPLOAD_DIR / filename
     if not path.is_file():
         raise HTTPException(404, "Not found.")
-    media = mimetypes.guess_type(filename)[0] or "application/octet-stream"
+    media = mimetypes.guess_type(filename)[0]
+    if filename.lower().endswith(".avif"):
+        media = "image/avif"
+    media = media or "application/octet-stream"
     return FileResponse(path, media_type=media, headers={"X-Content-Type-Options":"nosniff"})
 
 @app.get("/api/admin/enquiries")
