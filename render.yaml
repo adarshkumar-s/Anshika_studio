@@ -1,0 +1,29 @@
+databases:
+  - name: anshika-studio-db
+    plan: basic-256mb
+    databaseName: anshika
+    user: anshika
+
+services:
+  - type: web
+    name: anshika-studio
+    runtime: docker
+    plan: starter
+    healthCheckPath: /health
+    envVars:
+      - key: APP_ENV
+        value: production
+      - key: SECRET_KEY
+        generateValue: true
+      - key: DATABASE_URL
+        fromDatabase:
+          name: anshika-studio-db
+          property: connectionString
+      - key: DATA_DIR
+        value: /var/data
+      - key: UPLOAD_DIR
+        value: /var/data/uploads
+    disk:
+      name: anshika-studio-data
+      mountPath: /var/data
+      sizeGB: 1
