@@ -55,6 +55,7 @@ $("#logout").addEventListener("click", async () => {
 });
 
 async function refresh() {
+  showError("#adminError", "");
   const tasks = [
     ["dashboard", "/api/admin/dashboard"],
     ["products", "/api/admin/products"],
