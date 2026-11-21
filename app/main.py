@@ -311,7 +311,7 @@ def login(payload: LoginIn, request: Request, response: Response, db: Session = 
     user.failed_attempts = 0
     user.locked_until = None
     # Remove expired server-side sessions opportunistically during successful logins.
-    db.query(SessionToken).filter(SessionToken.expires_at < now.replace(tzinfo=None)).delete(synchronize_session=False)
+    db.query(SessionToken).filter(SessionToken.expires_at < now).delete(synchronize_session=False)
     raw = secrets.token_urlsafe(48)
     token_hash = hashlib.sha256(raw.encode()).hexdigest()
     csrf = secrets.token_urlsafe(32)
