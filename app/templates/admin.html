@@ -21,13 +21,15 @@
 <div id="adminView" hidden>
 <header class="admin-header"><a class="brand" href="/"><span class="crest">A</span><b>LABEL BY ANSHIKA</b></a><div><a href="/" target="_blank">View Boutique ↗</a><button id="logout" class="outline">Log Out</button></div></header>
 <main class="admin-main">
-  <div class="head"><p class="eyebrow">CONTROL ROOM</p><h1>Manage your <i>atelier.</i></h1></div>
+  <div class="head"><p class="eyebrow">CONTROL ROOM</p><h1>Manage your <i>atelier.</i></h1><button id="refreshDashboard" class="outline" type="button">Refresh dashboard</button><p id="adminError" class="error" role="status" hidden></p></div>
   <section class="stats"><div><b id="statProducts">0</b><span>Products</span></div><div><b id="statPublished">0</b><span>Published</span></div><div><b id="statEnquiries">0</b><span>New enquiries</span></div></section>
 
   <section class="card">
     <div class="section-title"><div><h2>Collection</h2><p class="muted">Products are stored centrally and changes are audited.</p></div><button id="addProduct" class="btn">+ Add Piece</button></div>
-    <div id="products"></div>
+    <label class="search-label">Search collection<input id="productSearch" type="search" placeholder="Search by name, tag or status"></label><div id="products"></div>
   </section>
+
+  <section class="card"><div class="section-title"><div><h2>Studio Settings</h2><p class="muted">Set the WhatsApp number customers use to contact the studio.</p></div></div><form id="settingsForm" class="settings-form"><label>WhatsApp number with country code<input id="whatsappSetting" inputmode="tel" maxlength="24" placeholder="e.g. 919876543210"></label><button class="btn" type="submit">Save settings</button><p id="settingsMessage" class="muted" role="status"></p></form></section>
 
   <section class="card"><div class="section-title"><div><h2>Enquiries</h2><p class="muted">Track customer conversations without losing the trail.</p></div></div><div id="enquiries"></div></section>
   <section class="card"><div class="section-title"><div><h2>Audit Trail</h2><p class="muted">Administrative changes are recorded.</p></div></div><div id="audit"></div></section>
