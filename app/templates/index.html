@@ -10,12 +10,12 @@
 <body>
 <header class="site-header">
   <a class="brand" href="/"><span class="crest">A</span><span><small>LABEL BY</small><b>ANSHIKA</b><i>Stories, Stitched to Perfection</i></span></a>
-  <nav>
+  <nav id="primaryNav" aria-label="Main navigation">
     <a href="#collection">Collection</a><a href="#story">Our Story</a><a href="#contact">Contact</a>
     <a href="https://www.instagram.com/labelby_anshika/" target="_blank" rel="noopener noreferrer">Instagram</a>
     <a class="admin-link" href="/admin">Admin</a>
   </nav>
-  <button class="menu" aria-label="Open menu">☰</button>
+  <button class="menu" type="button" aria-label="Open menu" aria-controls="primaryNav" aria-expanded="false">☰</button>
 </header>
 
 <main>
@@ -42,7 +42,7 @@
 <section id="contact" class="section contact">
   <p class="eyebrow">VISIT / ENQUIRE</p><h2>Let's create your<br><em>next look.</em></h2>
   <p>For bespoke styling, custom bridal orders, and availability, message the studio directly.</p>
-  <div class="actions"><a id="whatsapp" class="btn" target="_blank" rel="noopener noreferrer">WhatsApp the Studio ↗</a><a class="btn outline" href="https://www.instagram.com/labelby_anshika/" target="_blank" rel="noopener noreferrer">Instagram ↗</a></div>
+  <div class="actions"><a id="whatsapp" class="btn" target="_blank" rel="noopener noreferrer" hidden>WhatsApp the Studio ↗</a><p id="contactFallback" class="contact-fallback" hidden>WhatsApp is not configured yet. Please contact us through Instagram.</p><a class="btn outline" href="https://www.instagram.com/labelby_anshika/" target="_blank" rel="noopener noreferrer">Instagram ↗</a></div>
 </section>
 </main>
 <footer><b>LABEL BY ANSHIKA</b><span>Stories, Stitched to Perfection</span><span>© <span id="year"></span> Label by Anshika</span></footer>
