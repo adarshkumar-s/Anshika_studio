@@ -30,7 +30,10 @@ APP_ENV = os.getenv("APP_ENV", "development").lower()
 SECRET_KEY = os.getenv("SECRET_KEY", "")
 SESSION_TTL_HOURS = int(os.getenv("SESSION_TTL_HOURS", "12"))
 MAX_UPLOAD_BYTES = int(os.getenv("MAX_UPLOAD_BYTES", str(5 * 1024 * 1024)))
-ALLOWED_IMAGE_TYPES = {"image/jpeg", "image/png", "image/webp", "image/avif"}
+ALLOWED_IMAGE_TYPES = {"image/jpeg", "image/png", "image/webp"}
+ENQUIRY_LIMIT = 5
+ENQUIRY_WINDOW_SECONDS = 600
+_enquiry_attempts = {}
 
 if APP_ENV == "production" and len(SECRET_KEY) < 32:
     raise RuntimeError("SECRET_KEY must be a random value of at least 32 characters in production.")
@@ -140,6 +143,14 @@ def clean_text(value: str, max_len: int) -> str:
         raise HTTPException(422, "Input is too long.")
     return value
 
+def as_utc(value: Optional[datetime]) -> Optional[datetime]:
+    """SQLite may return naive datetimes even for timezone=True columns."""
+    if value is None:
+        return None
+    if value.tzinfo is None:
+        return value.replace(tzinfo=timezone.utc)
+    return value.astimezone(timezone.utc)
+
 def get_current_session(request: Request, db: Session) -> tuple[User, SessionToken]:
     raw = request.cookies.get("anshika_session")
     if not raw:
@@ -151,7 +162,7 @@ def get_current_session(request: Request, db: Session) -> tuple[User, SessionTok
     token_hash = hashlib.sha256(token.encode()).hexdigest()
     s = db.scalar(select(SessionToken).where(SessionToken.token_hash == token_hash))
     now = datetime.now(timezone.utc)
-    if not s or s.expires_at < now or not s.user.active:
+    if not s or as_utc(s.expires_at) < now or not s.user.active:
         raise HTTPException(401, "Session expired.")
     return s.user, s
 
@@ -195,6 +206,17 @@ class EnquiryIn(BaseModel):
 
 class EnquiryStatusIn(BaseModel):
     status: str = Field(min_length=2, max_length=30)
+
+class SettingsIn(BaseModel):
+    whatsapp: str = Field(default="", max_length=24)
+
+    @field_validator("whatsapp")
+    @classmethod
+    def valid_whatsapp(cls, value):
+        value = "".join(ch for ch in value if ch.isdigit())
+        if value and not 8 <= len(value) <= 15:
+            raise ValueError("Enter a WhatsApp number with country code (8–15 digits).")
+        return value
 
 def serialize_product(p: Product):
     return {"id": p.id, "name": p.name, "price": p.price, "tag": p.tag,
@@ -252,6 +274,13 @@ def public_settings(db: Session = Depends(db)):
 def create_enquiry(payload: EnquiryIn, request: Request, db: Session = Depends(db)):
     if payload.website:
         return {"ok": True}
+    now_ts = datetime.now(timezone.utc).timestamp()
+    ip_key = hash_ip(request)
+    recent = [stamp for stamp in _enquiry_attempts.get(ip_key, []) if now_ts - stamp < ENQUIRY_WINDOW_SECONDS]
+    if len(recent) >= ENQUIRY_LIMIT:
+        raise HTTPException(429, "Too many enquiries. Please try again in a few minutes.")
+    recent.append(now_ts)
+    _enquiry_attempts[ip_key] = recent
     product = db.get(Product, payload.product_id) if payload.product_id else None
     if payload.product_id and (not product or product.status != "PUBLISHED"):
         raise HTTPException(404, "Product not found.")
@@ -268,7 +297,7 @@ def login(payload: LoginIn, request: Request, response: Response, db: Session = 
     now = datetime.now(timezone.utc)
     if not user or not user.active:
         raise HTTPException(401, "Invalid username or password.")
-    if user.locked_until and user.locked_until > now:
+    if user.locked_until and as_utc(user.locked_until) > now:
         raise HTTPException(429, "Too many failed attempts. Try again later.")
     try:
         ph.verify(user.password_hash, payload.password)
@@ -281,6 +310,8 @@ def login(payload: LoginIn, request: Request, response: Response, db: Session = 
         raise HTTPException(401, "Invalid username or password.")
     user.failed_attempts = 0
     user.locked_until = None
+    # Remove expired server-side sessions opportunistically during successful logins.
+    db.query(SessionToken).filter(SessionToken.expires_at < now).delete(synchronize_session=False)
     raw = secrets.token_urlsafe(48)
     token_hash = hashlib.sha256(raw.encode()).hexdigest()
     csrf = secrets.token_urlsafe(32)
@@ -342,7 +373,9 @@ def update_product(product_id: int, payload: ProductIn, request: Request, auth=D
     before = serialize_product(p)
     p.name, p.price, p.tag, p.description = [clean_text(x, n) for x,n in
         [(payload.name,160),(payload.price,60),(payload.tag,60),(payload.description,500)]]
-    p.image_url, p.status, p.sort_order = payload.image_url, payload.status, payload.sort_order
+    if payload.image_url is not None:
+        p.image_url = payload.image_url
+    p.status, p.sort_order = payload.status, payload.sort_order
     after = serialize_product(p)
     audit(db, request, user.id, "UPDATE", "PRODUCT", p.id, before, after)
     db.commit()
@@ -370,19 +403,25 @@ async def upload_image(product_id: int, request: Request, file: UploadFile = Fil
     if not p:
         raise HTTPException(404, "Product not found.")
     if file.content_type not in ALLOWED_IMAGE_TYPES:
-        raise HTTPException(415, "Only JPEG, PNG, WebP, or AVIF images are allowed.")
+        raise HTTPException(415, "Only JPEG, PNG, or WebP images are allowed.")
     data = await file.read(MAX_UPLOAD_BYTES + 1)
     if len(data) > MAX_UPLOAD_BYTES:
         raise HTTPException(413, "Image is too large.")
-    # Validate actual image signature using Pillow, not only the MIME header.
+    # Validate the decoded image, its actual format, and dimensions.
     try:
         from PIL import Image
         import io
         im = Image.open(io.BytesIO(data))
+        if im.format not in {"JPEG", "PNG", "WEBP"} or im.width * im.height > 20_000_000:
+            raise ValueError("Unsupported image format or dimensions.")
+        detected_format = im.format
         im.verify()
     except Exception:
-        raise HTTPException(415, "Invalid image file.")
-    ext = {"image/jpeg":"jpg","image/png":"png","image/webp":"webp","image/avif":"avif"}[file.content_type]
+        raise HTTPException(415, "Invalid image. Use JPEG, PNG, or WebP up to 20 megapixels.")
+    expected = {"image/jpeg":"JPEG", "image/png":"PNG", "image/webp":"WEBP"}[file.content_type]
+    if detected_format != expected:
+        raise HTTPException(415, "Image content does not match its file type.")
+    ext = {"JPEG":"jpg", "PNG":"png", "WEBP":"webp"}[detected_format]
     filename = f"{secrets.token_hex(20)}.{ext}"
     path = UPLOAD_DIR / filename
     path.write_bytes(data)
@@ -391,6 +430,13 @@ async def upload_image(product_id: int, request: Request, file: UploadFile = Fil
     audit(db, request, user.id, "IMAGE_UPDATE", "PRODUCT", p.id,
           {"image_url": old}, {"image_url": p.image_url})
     db.commit()
+    if old and old.startswith("/uploads/"):
+        old_name = old.removeprefix("/uploads/")
+        if Path(old_name).name == old_name and old_name != filename:
+            try:
+                (UPLOAD_DIR / old_name).unlink(missing_ok=True)
+            except OSError:
+                pass
     return {"image_url": p.image_url}
 
 @app.get("/uploads/{filename}")
@@ -403,6 +449,26 @@ def uploaded_image(filename: str):
         raise HTTPException(404, "Not found.")
     media = mimetypes.guess_type(filename)[0] or "application/octet-stream"
     return FileResponse(path, media_type=media, headers={"X-Content-Type-Options":"nosniff"})
+
+@app.get("/api/admin/settings")
+def admin_settings(auth=Depends(require_admin), db: Session = Depends(db)):
+    wa = db.get(Setting, "whatsapp")
+    return {"whatsapp": wa.value if wa else ""}
+
+@app.put("/api/admin/settings")
+def update_admin_settings(payload: SettingsIn, request: Request, auth=Depends(require_admin), db: Session = Depends(db)):
+    user, session = auth
+    require_csrf(request, session)
+    setting = db.get(Setting, "whatsapp")
+    before = {"whatsapp": setting.value if setting else ""}
+    if setting is None:
+        setting = Setting(key="whatsapp", value=payload.whatsapp)
+        db.add(setting)
+    else:
+        setting.value = payload.whatsapp
+    audit(db, request, user.id, "UPDATE", "SETTING", "whatsapp", before, {"whatsapp": payload.whatsapp})
+    db.commit()
+    return {"whatsapp": payload.whatsapp}
 
 @app.get("/api/admin/enquiries")
 def admin_enquiries(auth=Depends(require_admin), db: Session = Depends(db)):
